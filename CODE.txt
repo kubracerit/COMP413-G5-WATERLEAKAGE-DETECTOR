@@ -1,0 +1,254 @@
+#define BLYNK_PRINT Serial
+#define BLYNK_TEMPLATE_ID "TMPL6CB2Yd4ew"
+#define BLYNK_TEMPLATE_NAME "Water Leakage Sensor"
+#define BLYNK_AUTH_TOKEN "ILyrjzHyqainROcdK0iu5Ngixd2NEjPq"
+
+#include <WiFi.h>
+#include <BlynkSimpleEsp32.h>
+#include <time.h>
+
+/* WIFI */
+char ssid[] = "AGUStudent";
+char pass[] = "Un7a38uN";
+
+/* PINS */
+#define SENSOR_A 35   // Living Room
+#define SENSOR_B 34   // Kitchen
+
+#define GREEN_LED 23
+#define RED_LED   22
+#define BUZZER    25  
+
+/* THRESHOLDS */
+#define MICRO_TH 3000
+#define MINOR_TH 2500
+#define MAJOR_TH 2000
+
+/* SMART ANALYTICS */
+#define MIN_WET_TIME 5000
+#define WARNING_TIME 120000
+#define BURST_CHANGE 600
+
+BlynkTimer timer;
+
+/* SMART VARIABLES */
+unsigned long wetStartA = 0;
+unsigned long wetStartB = 0;
+
+bool wasWetA = false;
+bool wasWetB = false;
+
+int lastValueA = 4095;
+int lastValueB = 4095;
+
+bool alertSent = false;
+
+/* TIME */
+const char* ntpServer = "pool.ntp.org";
+const long gmtOffset_sec = 3 * 3600;
+const int daylightOffset_sec = 0;
+bool timeReady = false;
+
+/* TINYML CLASSIFIER  */
+/*
+0 = Normal
+1 = Detecting
+2 = Minor
+3 = Major
+*/
+
+int tinyML_predict(float valueNorm, float changeNorm, float timeNorm) {
+
+  if (valueNorm > 0.75 && changeNorm < 0.15)
+    return 0;
+
+  if (timeNorm < 0.2)
+    return 1;
+
+  if (valueNorm <= 0.75 && valueNorm > 0.55)
+    return 2;
+
+  if (valueNorm <= 0.55 || changeNorm > 0.4)
+    return 3;
+
+  return 0;
+}
+
+String tinyML_toSeverity(int cls) {
+  if (cls == 1) return "Detecting";
+  if (cls == 2) return "Minor";
+  if (cls == 3) return "Major";
+  return "Normal";
+}
+
+/* GET TIME STRING */
+String getDateTime() {
+  if (!timeReady) return "Time syncing...";
+  struct tm timeinfo;
+  if (!getLocalTime(&timeinfo)) return "Time error";
+
+  char buffer[30];
+  strftime(buffer, sizeof(buffer), "%d/%m/%Y %H:%M:%S", &timeinfo);
+  return String(buffer);
+}
+
+/* MAIN FUNCTION */
+void updateSystem() {
+
+  int valueA = analogRead(SENSOR_A);
+  int valueB = analogRead(SENSOR_B);
+
+  bool wetA = valueA < MICRO_TH;
+  bool wetB = valueB < MICRO_TH;
+
+  unsigned long now = millis();
+
+  if (wetA && !wasWetA) wetStartA = now;
+  if (wetB && !wasWetB) wetStartB = now;
+
+  if (!wetA) wetStartA = 0;
+  if (!wetB) wetStartB = 0;
+
+  unsigned long durA = wetA ? now - wetStartA : 0;
+  unsigned long durB = wetB ? now - wetStartB : 0;
+
+  int changeA = lastValueA - valueA;
+  int changeB = lastValueB - valueB;
+
+  lastValueA = valueA;
+  lastValueB = valueB;
+
+  wasWetA = wetA;
+  wasWetB = wetB;
+
+  /* TinyML INPUT (Sensor A) */
+  float mlValueA  = valueA / 4095.0f;
+  float mlChangeA = abs(changeA) / 4095.0f;
+
+  float mlTimeA = durA / (float)MIN_WET_TIME;
+  if (mlTimeA > 1.0f) mlTimeA = 1.0f;
+
+  int mlClassA = 0;
+  if (wetA) {
+    mlClassA = tinyML_predict(mlValueA, mlChangeA, mlTimeA);
+  }
+
+  String mlSeverityA = tinyML_toSeverity(mlClassA);
+
+  String loc = "No Leak";
+  String sev = "Normal";
+  String sevA = "";
+  String sevB = "";
+
+  if (wetA) sevA = mlSeverityA;
+
+  if (wetB) {  // Threshold   
+  if (valueB <= MAJOR_TH) {
+    sevB = "Major";
+  }
+  else if (valueB <= MINOR_TH) {
+    sevB = "Minor";
+  }
+  else {
+    sevB = "Detecting";
+  }
+}
+
+
+  if (!wetA && !wetB) {  
+    loc = "No Leak";
+    sev = "Normal";
+  }
+  else if (wetA && wetB) {
+    loc = "Living Room & Kitchen";
+    sev = "Living Room: " + sevA + " | Kitchen: " + sevB;
+  }
+  else if (wetA) {
+    loc = "Living Room";
+    sev = sevA;
+  }
+  else if (wetB) {
+    loc = "Kitchen";
+    sev = sevB;
+  }
+
+  /* ALERT */
+ bool isSerious =
+  (sevA == "Minor" || sevA == "Major") ||
+  (sevB == "Minor" || sevB == "Major");
+
+if (isSerious && !alertSent && Blynk.connected()) {
+
+  String msg = "🚨 WATER LEAK ALERT 🚨\n\n";
+
+  msg += "Location:\n";
+  if (wetA) msg += "- Living Room (" + sevA + ")\n";
+  if (wetB) msg += "- Kitchen (" + sevB + ")\n";
+
+  msg += "\nDetected at:\n";
+  msg += getDateTime();
+
+  Blynk.logEvent("water_leak", msg);
+  alertSent = true;
+}
+
+if (!wetA && !wetB) {
+  alertSent = false;
+}
+
+
+  /* OUTPUT */
+sev.trim();  // removes leading/trailing whitespace
+
+digitalWrite(GREEN_LED, sev.equals("Normal"));
+digitalWrite(RED_LED, !sev.equals("Normal"));
+digitalWrite(BUZZER, sev.equals("Normal"));
+
+  /* BLYNK UPDATE */
+  if (Blynk.connected()) {
+    Blynk.virtualWrite(V0, 4095 - valueA);
+    Blynk.virtualWrite(V1, 4095 - valueB);
+    Blynk.virtualWrite(V2, loc);
+    Blynk.virtualWrite(V3, sev);
+  }
+
+  Serial.print("A: "); Serial.print(valueA);
+  Serial.print(" | B: "); Serial.print(valueB);
+  Serial.print(" | "); Serial.print(loc);
+  Serial.print(" | "); Serial.println(sev);
+}
+
+/* SETUP */
+void setup() {
+  Serial.begin(115200);
+  analogReadResolution(12);
+
+  pinMode(GREEN_LED, OUTPUT);
+  pinMode(RED_LED, OUTPUT);
+  pinMode(BUZZER, OUTPUT);
+
+  digitalWrite(GREEN_LED, HIGH);
+
+  Blynk.begin(BLYNK_AUTH_TOKEN, ssid, pass);
+  while (!Blynk.connected()) {
+    Blynk.run(); 
+  }
+
+  configTime(gmtOffset_sec, daylightOffset_sec, ntpServer);
+
+struct tm timeinfo;
+if (getLocalTime(&timeinfo)) {
+  timeReady = true;
+} else {
+  timeReady = false;
+}
+
+
+  timer.setInterval(1000L, updateSystem);
+}
+
+/* LOOP */
+void loop() {
+  Blynk.run();
+  timer.run();
+}
