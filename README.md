@@ -1,5 +1,5 @@
 # COMP413-G5-WATERLEAKAGE-DETECTOR
-İOT PROJECT-ABDULKADİR KÖSE
+IOT PROJECT-ABDULKADİR KÖSE
 
 This project presents a Smart Water Leakage Detection System designed for indoor environments using ESP32 and IoT technologies. The system continuously monitors water leakage at two different locations (Living Room and Kitchen), classifies the severity of the leak using a TinyML-inspired rule-based classifier, and provides real-time alerts via a cloud dashboard (Blynk IoT).
 
@@ -19,6 +19,7 @@ Set-up Instructions
 5.	Open the Blynk mobile/web dashboard to monitor live data.
 
 Hardware List
+
 ESP32 Development Board	1
 Water Leakage Sensors (Analog)	2
 Green LED	1
