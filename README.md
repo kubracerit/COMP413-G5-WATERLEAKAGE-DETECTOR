@@ -1,3 +1,9 @@
+<p align="center">
+  <img src="images/banner.png" alt="Project Banner" width="800">
+</p>
+
+
+
 # COMP413-G5-WATERLEAKAGE-DETECTOR
 IOT PROJECT-ABDULKADİR KÖSE
 
